@@ -1,0 +1,112 @@
+Here’s an equivalent approach for building a home timeline in **MongoDB**, which is a NoSQL database. MongoDB uses **collections** and **documents** rather than tables and rows like in relational databases.
+
+### MongoDB Schema Design
+
+In MongoDB, we will use three collections:
+1. **Users**: Stores user information.
+2. **Tweets**: Stores each tweet with a reference to the user who posted it.
+3. **Follows**: Stores information about which users follow which others.
+
+#### 1. **Users Collection**
+Each document in the `users` collection represents a user:
+
+```json
+{
+  "_id": ObjectId("613b6ef4f6e678001f4a0b8d"),
+  "username": "john_doe",
+  "name": "John Doe",
+  "created_at": "2024-01-15T12:34:56.000Z"
+}
+```
+
+#### 2. **Tweets Collection**
+Each document in the `tweets` collection represents a tweet:
+
+```json
+{
+  "_id": ObjectId("613b6f0ef6e678001f4a0b8e"),
+  "user_id": ObjectId("613b6ef4f6e678001f4a0b8d"),
+  "content": "This is a tweet",
+  "created_at": "2024-01-16T10:30:00.000Z"
+}
+```
+
+- `user_id`: A reference to the user who posted the tweet.
+- `content`: The tweet text (or other media).
+- `created_at`: The time the tweet was posted.
+
+#### 3. **Follows Collection**
+Each document in the `follows` collection represents a "following" relationship:
+
+```json
+{
+  "_id": ObjectId("613b6f18f6e678001f4a0b8f"),
+  "follower_id": ObjectId("613b6ef4f6e678001f4a0b8d"),
+  "followee_id": ObjectId("613b6e6af6e678001f4a0b8c")
+}
+```
+
+- `follower_id`: The user who follows someone.
+- `followee_id`: The user being followed.
+
+### MongoDB Query to Fetch Home Timeline
+
+Now, when a user requests their home timeline, we need to:
+
+1. **Look up the users they follow**.
+2. **Fetch the tweets** from those users.
+3. **Sort the tweets** by the `created_at` field.
+
+#### Step 1: Find Users the Current User Follows
+
+First, we need to retrieve the list of users that the current user follows. Assuming the current user’s `_id` is `ObjectId("613b6ef4f6e678001f4a0b8d")`:
+
+```js
+db.follows.find({ follower_id: ObjectId("613b6ef4f6e678001f4a0b8d") }, { followee_id: 1, _id: 0 })
+```
+
+This returns the IDs of the users the current user follows.
+
+#### Step 2: Fetch Tweets from Followed Users
+
+Next, we can fetch the tweets from those users. We’ll assume we have an array of followee IDs from the previous query. Here’s how to use them to find tweets:
+
+```js
+db.tweets.find({ user_id: { $in: [ObjectId("613b6e6af6e678001f4a0b8c"), ObjectId("613b6e6bf6e678001f4a0b8d")] } })
+.sort({ created_at: -1 })
+.limit(50)
+```
+
+- **`$in`**: We use the `$in` operator to find tweets where `user_id` matches any of the followee IDs.
+- **`sort({ created_at: -1 })`**: This sorts the tweets in reverse chronological order (most recent first).
+- **`limit(50)`**: Limits the number of tweets returned (optional but typically used to paginate results).
+
+This returns the tweets for the people the current user follows, sorted by time.
+
+### Example of the Full Workflow
+
+```js
+// Step 1: Find the IDs of users the current user follows
+const followees = db.follows.find(
+  { follower_id: ObjectId("613b6ef4f6e678001f4a0b8d") }, 
+  { followee_id: 1, _id: 0 }
+).map(f => f.followee_id);
+
+// Step 2: Find tweets by those users
+const homeTimeline = db.tweets.find(
+  { user_id: { $in: followees } }
+).sort({ created_at: -1 }).limit(50);
+```
+
+### Schema Recap:
+- `users`: Stores user information like username and name.
+- `tweets`: Stores tweets with the associated `user_id` and the timestamp.
+- `follows`: Stores following relationships between users (who follows whom).
+
+### Summary
+
+- In MongoDB, tweets are stored in a collection and users are linked to their tweets via the `user_id`.
+- The `follows` collection stores relationships between users, allowing us to query tweets for a specific user’s followees.
+- We can fetch the home timeline by querying the tweets of the users a particular user follows and sorting them by the time they were created.
+
+MongoDB's flexibility allows us to denormalize data, and in some cases, we might embed tweets directly in user documents or denormalize some parts of the schema for better performance, depending on the specific use case.

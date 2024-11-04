@@ -1,0 +1,313 @@
+ Storage and Retrieval
+
+ On the most fundamental level, a database needs to do two things: when you give it
+ some data, it should store the data, and when you ask it again later, it should give the
+ data back to you.
+
+ first we’ll start this chapter by talking about storage engines that are used in
+ the kinds of databases that you’re probably familiar with: traditional relational data 
+ bases, and also most so-called NoSQL databases. We will examine two families of
+ 
+storage engines: log-structured storage engines, and page-oriented storage engines such as B-trees
+
+ Consider the world’s simplest database, implemented as two Bash functions:
+ #!/bin/bash
+ db_set () {
+ echo "$1,$2" >> database
+ }
+ db_get () {
+    grep "^$1," database | sed -e "s/^$1,//" | tail -n 1
+ }
+ These two functions implement a key-value store. You can call db_set key value,
+ which will store key and value in the database. The key and value can be (almost)
+ anything you like—for example, the value could be a JSON document. You can then
+ call db_get key, which looks up the most recent value associated with that particular
+ key and returns it.
+
+ In order to efficiently find the value for a particular key in the database, we need a
+ different data structure: an index. In this chapter we will look at a range of indexing
+ structures and see how they compare; the general idea behind them is to keep some
+ additional metadata on the side, which acts as a signpost and helps you to locate the
+ data you want. If you want to search the same data in several different ways, you may
+ need several different indexes on different parts of the data.
+
+  An index is an additional structure that is derived from the primary data. Many data
+bases allow you to add and remove indexes, and this doesn’t affect the contents of the
+ database; it only affects the performance of queries. Maintaining additional structures
+ incurs overhead, especially on writes. For writes, it’s hard to beat the performance of
+ simply appending to a file, because that’s the simplest possible write operation. Any
+ kind of index usually slows down writes, because the index also needs to be updated
+ every time data is written
+
+  This is an important trade-off in storage systems: well-chosen indexes speed up read
+ queries, but every index slows down writes. For this reason, databases don’t usually
+ index everything by default, but require you—the application developer or database
+ administrator—to choose indexes manually, using your knowledge of the application’s
+  typical query patterns. You can then choose the indexes that give your application
+   the greatest benefit, without introducing more overhead than necessary.
+
+Hash Indexes
+ Let’s start with indexes for key-value data. This is not the only kind of data you can
+ index, but it’s very common, and it’s a useful building block for more complex
+ indexes.
+ Key-value stores are quite similar to the dictionary type that you can find in most
+ programming languages, and which is usually implemented as a hash map (hash
+ table). Hash maps are described in many algorithms textbooks, so we won’t go
+ into detail of how they work here. Since we already have hash maps for our in
+memory data structures, why not use them to index our data on disk?
+ Let’s say our data storage consists only of appending to a file, as in the preceding
+ example. Then the simplest possible indexing strategy is this: keep an in-memory
+ hash map where every key is mapped to a byte offset in the data file—the location at
+ which the value can be found, as illustrated in Figure 3-1. Whenever you append a
+ new key-value pair to the file, you also update the hash map to reflect the offset of the
+ data you just wrote (this works both for inserting new keys and for updating existing
+ keys). When you want to look up a value, use the hash map to find the offset in the
+ data file, seek to that location, and read the value
+
+
+ The concept you described is about using a simple **append-only data storage model** with an **in-memory hash map** to store byte offsets for key-value lookups. Here's a breakdown of the approach:
+
+1. **Appending to File**: Every time new data (a key-value pair) is written, it is appended to the end of a file. This is efficient for writes since you’re not overwriting or altering the existing data but merely adding to the end.
+
+2. **In-memory Hash Map**: For fast lookups, an in-memory hash map is maintained. The keys are mapped to the **byte offset** in the file where the corresponding value is stored. When a key-value pair is added or updated, the hash map stores the location (offset) of the data in the file.
+
+3. **Lookup Process**: To retrieve a value, you first check the hash map to get the byte offset of the value in the file. Then, you seek to that offset in the file and read the data.
+
+4. **Data Consistency**: If a key is updated, the new value is appended to the file, and the hash map is updated with the new offset, so only the latest value is accessible via the hash map.
+
+### Use Cases:
+- This design is effective for systems with frequent writes and reads, such as **log-structured storage** systems.
+- It's commonly seen in **key-value stores** like **Bitcask** (used by Riak) or **append-only databases**, where the design is optimized for high write throughput and simplicity.
+
+### Limitations:
+- Since the file grows indefinitely, periodic **compaction** or **garbage collection** may be required to remove old, unused data and reclaim disk space.
+- The hash map must fit in memory for efficient lookups, which may not be scalable for large datasets.
+
+This technique is a straightforward and efficient method of managing data in append-only systems, balancing simplicity and performance.
+
+Yes, that’s essentially correct! When we say that an **in-memory hash map** is used to store the **byte offset** in the file, it means that the hash map holds the location of each key's corresponding value in terms of its position within the file. Here's how it works step-by-step:
+
+1. **Writing Data**:
+   - Whenever a key-value pair is written to the file, it is appended at the end of the file. The file keeps growing as new data is written.
+   - The system tracks the current position in the file (byte offset), which is the number of bytes from the beginning of the file to where the new data is written.
+   - The key is mapped to this byte offset in the hash map. So, the value stored in the hash map is not the value itself, but the location in the file where the value starts.
+
+2. **Byte Offset**:
+   - The **byte offset** is essentially a marker for where the data starts in the file. It allows the system to "seek" or jump directly to that position in the file when looking up a value, rather than having to scan through the entire file.
+   - To determine how far into the file the data starts, the system counts the number of bytes from the start of the file to the point where the data is written.
+
+3. **Seek Operation**:
+   - When you want to retrieve a value for a given key, you first look up the key in the hash map. The hash map gives you the **byte offset** of the value.
+   - Using the **seek operation**, the system moves the read head of the file to the specified byte offset, and from there it reads the value.
+
+4. **Reading Data**:
+   - Once the read head is at the correct byte offset, the system reads the data at that location. Since the data was written as a key-value pair, it can extract the value directly from that position.
+
+5. **Efficiency**:
+   - This method allows efficient lookups, as the hash map provides instant access to the byte offset, and the seek operation can jump to any position in the file quickly, avoiding the need for a full scan.
+
+### Example:
+
+If the file looks like this (simplified for clarity):
+
+```
+0: key1,value1
+20: key2,value2
+40: key3,value3
+```
+
+The hash map would store something like:
+
+```
+key1 -> 0
+key2 -> 20
+key3 -> 40
+```
+
+When you need `value2`, the hash map tells you it’s at byte offset `20`, so the system uses `seek(20)` to jump directly to that part of the file and read `value2`.
+
+This strategy works well for **append-only** file systems, as new data is always added to the end, and old data is not overwritten, simplifying storage management.
+
+Compaction:
+how do we avoid eventually running out of disk space? A good solution is to break the log into segments of a certain size by closing a segment file when it reaches a certain size, and making subsequent writes to a new segment file. 
+We can then perform compaction on these segments, as illustrated in Figure 3-2.
+Compaction means throwing away duplicate keys in the log, and keeping only the most recent update for each key.
+
+**Compaction** in the context of an append-only log-based storage system refers to a process used to reclaim space and manage the growth of data files. Over time, as keys are updated or deleted, an append-only strategy leads to the accumulation of stale or obsolete data, causing the file to grow unnecessarily large. Compaction addresses this problem by cleaning up the file and removing outdated records. Here's how it works:
+
+### Key Concepts of Compaction:
+
+1. **Log Growth Due to Updates/Deletes**:
+   - In an append-only system, each time you update a key or delete a key-value pair, the old version of the data remains in the file. New data is simply appended, and the hash map is updated to point to the latest byte offset.
+   - This means old data (which is no longer referenced) continues to consume space even though it's obsolete.
+
+2. **Compaction Process**:
+   - **Identify Obsolete Data**: During compaction, the system identifies old versions of data that are no longer needed. This is possible because the in-memory hash map contains the latest byte offset for each key. Anything before the latest byte offset for a key is considered obsolete.
+   - **Rewrite the File**: The compaction process creates a new file containing only the most recent versions of each key-value pair and discards the obsolete data.
+   - **Update the Hash Map**: Once compaction is complete, the in-memory hash map is updated to reflect the new offsets of the key-value pairs in the compacted file.
+
+3. **Efficiency Benefits**:
+   - **Reclaims Space**: Compaction reduces the size of the log file by removing old, irrelevant data.
+   - **Improves Performance**: Since there is less data to search through during reads, and the file size is smaller, the system becomes more efficient.
+   - **Prevents Uncontrolled Growth**: Without compaction, the append-only log would grow indefinitely, which could lead to degraded performance and excessive disk usage.
+
+### Example:
+Assume a key `user_id:123` is updated multiple times in the append-only file:
+
+- Initially, at byte offset 0: `user_id:123 -> {"name": "Alice", "age": 25}`
+- Later, at byte offset 100: `user_id:123 -> {"name": "Alice", "age": 26}`
+- Finally, at byte offset 200: `user_id:123 -> {"name": "Alice", "age": 27}`
+
+The hash map will point to the most recent record at byte offset 200. However, the previous entries at offsets 0 and 100 are now obsolete, but they still take up space.
+
+During compaction:
+- The system will copy the most recent version (`age: 27`) to a new file.
+- The entries at offsets 0 and 100 will be discarded.
+- The hash map is updated to point to the new location of the record in the compacted file.
+
+### Importance in Large-Scale Systems:
+Compaction is essential for maintaining performance and managing resources in large-scale distributed systems, like databases or log-based systems such as **Kafka**, **LevelDB**, and **Cassandra**. These systems rely on efficient use of disk space and the ability to quickly access and update data, both of which are improved through regular compaction.
+
+### Log FIle - Formats
+When selecting a file format for a log file in the context of an append-only storage system, you want to focus on the following key factors: simplicity, speed of writes, read efficiency, and support for compaction. Based on these criteria, here are some commonly considered file formats for log files:
+
+### 1. **Plain Text (with Delimited Records)**
+   - **Pros**: 
+     - Simple to implement and easy to read or debug with common tools like `cat`, `grep`, etc.
+     - Lightweight format; no need for additional software to parse.
+   - **Cons**:
+     - No compression, leading to larger file sizes.
+     - Parsing text can be slower for large files.
+     - No built-in support for metadata or more complex indexing.
+
+   **Use case**: Best for lightweight logging systems where simplicity is preferred over performance.
+
+### 2. **Binary Format (Custom or Fixed-Width)**
+   - **Pros**: 
+     - Faster to read and write due to fixed-width entries (no need to parse text).
+     - Can be more space-efficient.
+     - Easier to seek specific byte offsets, which is important for hash map-based indexing.
+   - **Cons**:
+     - Requires custom parsing tools, making it less user-friendly.
+     - Debugging is more difficult since it's not human-readable without tools.
+
+   **Use case**: Ideal when speed is critical and simplicity is less important, such as in large-scale logging or append-only databases.
+
+### 3. **Apache Avro**
+   - **Pros**:
+     - Compact and efficient binary format.
+     - Schema evolution support, meaning you can change the structure of the log over time without breaking compatibility.
+     - Built-in support for compression (e.g., Snappy or Deflate).
+   - **Cons**:
+     - Slightly more complex to implement than text or raw binary formats.
+     - Requires tools to serialize and deserialize the data.
+
+   **Use case**: Great for distributed systems where logs may change over time, such as Kafka and other big data applications.
+
+### 4. **Protocol Buffers (Protobuf)**
+   - **Pros**:
+     - Efficient, compact, and binary.
+     - Schema-based, similar to Avro, with backward and forward compatibility.
+     - Widely used in large-scale systems and by companies like Google.
+   - **Cons**:
+     - Requires predefined schema and the tools to compile and serialize/deserialize.
+     - Slightly steeper learning curve compared to simpler formats.
+
+   **Use case**: Used in performance-critical applications, especially in distributed environments that require cross-language compatibility.
+
+### 5. **JSON (or JSON Lines)**
+   - **Pros**:
+     - Human-readable, easy to debug.
+     - Universally supported by programming languages.
+     - Can easily extend logs by adding new fields without schema changes.
+   - **Cons**:
+     - Not as space-efficient as binary formats.
+     - Parsing can be slower than binary formats for large-scale systems.
+     - Poor for large-scale use without compression.
+
+   **Use case**: Good for simpler systems or when human-readability and flexibility are important (for example, small-scale logging or APIs).
+
+### 6. **Parquet**
+   - **Pros**:
+     - Columnar storage format, which can be highly efficient for querying specific fields.
+     - Supports compression and efficient data encoding.
+   - **Cons**:
+     - Overhead may not be worth it for simple log file use cases.
+     - Primarily used in analytics and big data storage, not ideal for simple append-only log files.
+
+   **Use case**: Suitable for use in analytics or log aggregation systems where query performance on specific fields matters.
+
+---
+
+### Conclusion:
+- For **simple append-only logging**, a **plain text file** or a **binary format** with fixed-width records works well due to simplicity and ease of use.
+- For **performance-focused systems** with structured data and possible schema evolution, formats like **Apache Avro** or **Protocol Buffers** are better choices.
+- For human-readability combined with flexibility, **JSON** or **JSON Lines** are good middle-ground formats but may require compression for large-scale systems.
+
+Your final choice depends on the specific requirements for performance, data complexity, readability, and tooling in your system.
+
+B-Trees
+The log-structured indexes we have discussed so far are gaining acceptance, but they
+are not the most common type of index. The most widely used indexing structure is
+quite different: the B-tree
+
+Like SSTables, B-trees keep key-value pairs sorted by key, which allows efficient key
+value lookups and range queries. But that’s where the similarity ends: B-trees have a
+very different design philosophy.
+The log-structured indexes we saw earlier break the database down into variable-size
+segments, typically several megabytes or more in size, and always write a segment
+sequentially. By contrast, B-trees break the database down into fixed-size blocks or
+pages, traditionally 4 KB in size (sometimes bigger), and read or write one page at a
+time. This design corresponds more closely to the underlying hardware, as disks are
+also arranged in fixed-size blocks.
+Each page can be identified using an address or location, which allows one page to
+refer to another—similar to a pointer, but on disk instead of in memory.
+
+The number of references to child pages in one page of the B-tree is called the
+branching factor.
+
+If you want to update the value for an existing key in a B-tree, you search for the leaf
+page containing that key, change the value in that page, and write the page back to
+disk (any references to that page remain valid). If you want to add a new key, you
+need to find the page whose range encompasses the new key and add it to that page.
+If there isn’t enough free space in the page to accommodate the new key, it is split
+into two half-full pages, and the parent page is updated to account for the new subdi
+vision of key ranges
+
+This algorithm ensures that the tree remains balanced: a B-tree with n keys always
+has a depth of O(log n). Most databases can fit into a B-tree that is three or four levels
+deep, so you don’t need to follow many page references to find the page you are look
+ing for. (A four-level tree of 4 KB pages with a branching factor of 500 can store up to
+256 TB.)
+
+## B-Trees: A Balanced Tree Structure
+
+**B-trees** are self-balancing tree data structures that are widely used in databases and file systems. They are particularly efficient for storing and retrieving large amounts of data.
+
+**Key Characteristics:**
+
+* **Order:** A B-tree of order m has at most m children and at least ⌈m/2⌉ children (except for the root, which may have fewer children).
+* **Keys:** Each node contains at most m-1 keys.
+* **Children:** Each internal node contains pointers to its children.
+* **Leaf Nodes:** All leaf nodes are at the same level.
+* **Balanced:** The tree is balanced, meaning that the heights of any two leaf nodes differ by at most one.
+
+**Why B-Trees?**
+
+B-trees are well-suited for applications that require:
+
+* **Efficient searching:** B-trees can efficiently locate keys and the associated data.
+* **Efficient insertions and deletions:** B-trees maintain their balance during insertions and deletions, ensuring efficient operations.
+* **Large datasets:** B-trees can handle large datasets effectively due to their ability to store multiple keys and pointers in a single node.
+
+**Applications:**
+
+* **Database systems:** B-trees are commonly used in databases to index data and facilitate efficient querying.
+* **File systems:** B-trees can be used to manage file systems, allowing for efficient searching and retrieval of files.
+* **In-memory databases:** B-trees can be used in-memory to provide fast access to data.
+
+**Visual Representation:**
+
+[Image of a B-tree]
+
+**Would you like to learn more about specific operations on B-trees, such as searching, insertion, and deletion? Or perhaps you'd like to explore the comparison between B-trees and other tree structures like red-black trees or AVL trees?**
