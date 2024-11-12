@@ -46,8 +46,8 @@ A master database generally only supports write operations. A slave database get
 the data from the master database and only supports read operations. All the data-modifying
 commands like insert, delete, or update must be sent to the master database. Most
 applications require a much higher ratio of reads to writes; thus, the number of slave
-databases in a system is usually larger than the number of master databases. Figure 1-5 shows
-a master database with multiple slave databases.
+databases in a system is usually larger than the number of master databases. 
+
 Advantages of database replication:
 • Better performance: In the master-slave model, all writes and updates happen in master
 nodes; whereas, read operations are distributed across slave nodes. This model improves
@@ -203,3 +203,177 @@ If not, the CDN fetches the file from the origin server and caches it for future
 
 By combining CDNs and caching, you can significantly enhance the performance and scalability of your web applications.
 
+Stateless web tier
+Now it is time to consider scaling the web tier horizontally. For this, we need to move state
+(for instance user session data) out of the web tier. A good practice is to store session data in
+the persistent storage such as relational database or NoSQL. Each web server in the cluster
+can access state data from databases. This is called stateless web tier.
+
+Stateful architecture
+A stateful server and stateless server has some key differences. A stateful server remembers
+client data (state) from one request to the next. A stateless server keeps no state information.
+Figure 1-12 shows an example of a stateful architecture.
+
+user A’s session data and profile image are stored in Server 1. To authenticate
+User A, HTTP requests must be routed to Server 1. If a request is sent to other servers like
+Server 2, authentication would fail because Server 2 does not contain User A’s session data.
+Similarly, all HTTP requests from User B must be routed to Server 2; all requests from User
+C must be sent to Server 3.
+The issue is that every request from the same client must be routed to the same server. This
+can be done with sticky sessions in most load balancers [10]; however, this adds the
+overhead. Adding or removing servers is much more difficult with this approach. It is also
+challenging to handle server failures.
+
+Stateless architecture
+Figure 1-13 shows the stateless architecture.
+In this stateless architecture, HTTP requests from users can be sent to any web servers, which
+fetch state data from a shared data store. State data is stored in a shared data store and kept
+out of web servers. A stateless system is simpler, more robust, and scalable.
+
+In Figure 1-14, we move the session data out of the web tier and store them in the persistent
+data store. The shared data store could be a relational database, Memcached/Redis, NoSQL,
+etc. The NoSQL data store is chosen as it is easy to scale. Autoscaling means adding or
+removing web servers automatically based on the traffic load. After the state data is removed
+out of web servers, auto-scaling of the web tier is easily achieved by adding or removing
+servers based on traffic load.
+
+
+Your website grows rapidly and attracts a significant number of users internationally. To
+improve availability and provide a better user experience across wider geographical areas,
+supporting multiple data centers is crucial.
+
+Data centers
+Figure 1-15 shows an example setup with two data centers. In normal operation, users are
+geoDNS-routed, also known as geo-routed, to the closest data center, with a split traffic of
+x% in US-East and (100 – x)% in US-West. geoDNS is a DNS service that allows domain
+names to be resolved to IP addresses based on the location of a user.
+In the event of any significant data center outage, we direct all traffic to a healthy data center.
+In Figure 1-16, data center 2 (US-West) is offline, and 100% of the traffic is routed to data
+center 1 (US-East)
+
+Several technical challenges must be resolved to achieve multi-data center setup:
+• Traffic redirection: Effective tools are needed to direct traffic to the correct data center.
+GeoDNS can be used to direct traffic to the nearest data center depending on where a user
+is located.
+• Data synchronization: Users from different regions could use different local databases or
+caches. In failover cases, traffic might be routed to a data center where data is unavailable.
+A common strategy is to replicate data across multiple data centers. A previous study
+shows how Netflix implements asynchronous multi-data center replication [11]. 
+• Test and deployment: With multi-data center setup, it is important to test your
+website/application at different locations. Automated deployment tools are vital to keep
+services consistent through all the data centers [11].
+To further scale our system, we need to decouple different components of the system so they
+can be scaled independently. Messaging queue is a key strategy employed by many realworld distributed systems to solve this problem.
+
+Message queue
+A message queue is a durable component, stored in memory, that supports asynchronous
+communication. It serves as a buffer and distributes asynchronous requests. The basic
+architecture of a message queue is simple. Input services, called producers/publishers, create
+messages, and publish them to a message queue. Other services or servers, called
+consumers/subscribers, connect to the queue, and perform actions defined by the messages.
+The model is shown in Figure 1-17.
+Decoupling makes the message queue a preferred architecture for building a scalable and
+reliable application. With the message queue, the producer can post a message to the queue
+when the consumer is unavailable to process it. The consumer can read messages from the
+queue even when the producer is unavailable.
+Consider the following use case: your application supports photo customization, including
+cropping, sharpening, blurring, etc. Those customization tasks take time to complete. In
+Figure 1-18, web servers publish photo processing jobs to the message queue. Photo
+processing workers pick up jobs from the message queue and asynchronously perform photo
+customization tasks. The producer and the consumer can be scaled independently. When the
+size of the queue becomes large, more workers are added to reduce the processing time.
+However, if the queue is empty most of the time, the number of workers can be reduced
+
+Logging, metrics, automation
+When working with a small website that runs on a few servers, logging, metrics, and
+automation support are good practices but not a necessity. However, now that your site has
+grown to serve a large business, investing in those tools is essential.
+Logging: Monitoring error logs is important because it helps to identify errors and problems
+in the system. You can monitor error logs at per server level or use tools to aggregate them to
+a centralized service for easy search and viewing.
+Metrics: Collecting different types of metrics help us to gain business insights and understand
+the health status of the system. Some of the following metrics are useful:
+• Host level metrics: CPU, Memory, disk I/O, etc.
+• Aggregated level metrics: for example, the performance of the entire database tier, cache
+tier, etc.
+• Key business metrics: daily active users, retention, revenue, etc.
+
+Automation: When a system gets big and complex, we need to build or leverage automation
+tools to improve productivity. Continuous integration is a good practice, in which each code
+check-in is verified through automation, allowing teams to detect problems early. Besides,
+automating your build, test, deploy process, etc. could improve developer productivity
+significantly.
+Adding message queues and different tools
+Figure 1-19 shows the updated design. Due to the space constraint, only one data center is
+shown in the figure.
+1. The design includes a message queue, which helps to make the system more loosely
+coupled and failure resilient.
+2. Logging, monitoring, metrics, and automation tools are included.
+
+
+Database scaling
+There are two broad approaches for database scaling: vertical scaling and horizontal scaling.
+Vertical scaling
+Vertical scaling, also known as scaling up, is the scaling by adding more power (CPU, RAM,
+DISK, etc.) to an existing machine. There are some powerful database servers. According to
+Amazon Relational Database Service (RDS) [12], you can get a database server with 24 TB
+of RAM. This kind of powerful database server could store and handle lots of data. For
+example, stackoverflow.com in 2013 had over 10 million monthly unique visitors, but it only
+had 1 master database [13]. However, vertical scaling comes with some serious drawbacks:
+• You can add more CPU, RAM, etc. to your database server, but there are hardware
+limits. If you have a large user base, a single server is not enough.
+• Greater risk of single point of failures.
+• The overall cost of vertical scaling is high. Powerful servers are much more expensive.
+
+Horizontal scaling
+Horizontal scaling, also known as sharding, is the practice of adding more servers. Figure 1-
+20 compares vertical scaling with horizontal scaling.
+Sharding separates large databases into smaller, more easily managed parts called shards.
+Each shard shares the same schema, though the actual data on each shard is unique to the
+shard.
+Figure 1-21 shows an example of sharded databases. User data is allocated to a database
+server based on user IDs. Anytime you access data, a hash function is used to find the
+corresponding shard. In our example, user_id % 4 is used as the hash function. If the result
+equals to 0, shard 0 is used to store and fetch data. If the result equals to 1, shard 1 is used.
+The same logic applies to other shards.
+Figure 1-22 shows the user table in sharded databases.
+The most important factor to consider when implementing a sharding strategy is the choice of
+the sharding key. Sharding key (known as a partition key) consists of one or more columns
+that determine how data is distributed. As shown in Figure 1-22, “user_id” is the sharding
+key. A sharding key allows you to retrieve and modify data efficiently by routing database
+queries to the correct database. When choosing a sharding key, one of the most important
+criteria is to choose a key that can evenly distributed data.
+Sharding is a great technique to scale the database but it is far from a perfect solution. It
+introduces complexities and new challenges to the system:
+Resharding data: Resharding data is needed when 1) a single shard could no longer hold
+more data due to rapid growth. 2) Certain shards might experience shard exhaustion faster
+than others due to uneven data distribution. When shard exhaustion happens, it requires
+updating the sharding function and moving data around. Consistent hashing, which will be
+discussed in Chapter 5, is a commonly used technique to solve this problem.
+Celebrity problem: This is also called a hotspot key problem. Excessive access to a specific
+shard could cause server overload. Imagine data for Katy Perry, Justin Bieber, and Lady
+Gaga all end up on the same shard. For social applications, that shard will be overwhelmed
+with read operations. To solve this problem, we may need to allocate a shard for each
+celebrity. Each shard might even require further partition.
+Join and de-normalization: Once a database has been sharded across multiple servers, it is
+hard to perform join operations across database shards. A common workaround is to denormalize the database so that queries can be performed in a single table.
+In Figure 1-23, we shard databases to support rapidly increasing data traffic. At the same
+time, some of the non-relational functionalities are moved to a NoSQL data store to reduce
+the database load. Here is an article that covers many use cases of NoSQL [14].
+
+
+Millions of users and beyond
+Scaling a system is an iterative process. Iterating on what we have learned in this chapter
+could get us far. More fine-tuning and new strategies are needed to scale beyond millions of
+users. For example, you might need to optimize your system and decouple the system to even
+smaller services. All the techniques learned in this chapter should provide a good foundation
+to tackle new challenges. To conclude this chapter, we provide a summary of how we scale
+our system to support millions of users:
+• Keep web tier stateless
+• Build redundancy at every tier
+• Cache data as much as you can
+• Support multiple data centers
+• Host static assets in CDN
+• Scale your data tier by sharding
+• Split tiers into individual services
+• Monitor your system and use automation tools
