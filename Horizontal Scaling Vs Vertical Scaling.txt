@@ -263,7 +263,7 @@ shows how Netflix implements asynchronous multi-data center replication [11].
 website/application at different locations. Automated deployment tools are vital to keep
 services consistent through all the data centers [11].
 To further scale our system, we need to decouple different components of the system so they
-can be scaled independently. Messaging queue is a key strategy employed by many realworld distributed systems to solve this problem.
+can be scaled independently. Messaging queue is a key strategy employed by many realworld distributed systems to solve this problem.
 
 Message queue
 A message queue is a durable component, stored in memory, that supports asynchronous
@@ -306,7 +306,8 @@ significantly.
 Adding message queues and different tools
 Figure 1-19 shows the updated design. Due to the space constraint, only one data center is
 shown in the figure.
-1. The design includes a message queue, which helps to make the system more loosely coupled and failure resilient.
+1. The design includes a message queue, which helps to make the system more loosely
+coupled and failure resilient.
 2. Logging, monitoring, metrics, and automation tools are included.
 
 
